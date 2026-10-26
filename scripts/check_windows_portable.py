@@ -28,7 +28,8 @@ def is_system(name):
 def check():
     runtime = PACKAGE / 'runtime'
     site = runtime / 'Lib/site-packages'
-    required = [PACKAGE / '纸页扫描.exe', runtime / 'python312.dll',
+    required = [PACKAGE / '纸页扫描.exe', PACKAGE / '纸页扫描-cli.exe',
+                PACKAGE / '命令行使用说明.md', PACKAGE / 'app/paper_scanner/cli.py', runtime / 'python312.dll',
                 runtime / 'python3.dll', runtime / 'python312.zip',
                 site / '_mnncengine.cp312-win_amd64.pyd',
                 site / 'PySide6/plugins/platforms/qwindows.dll',
@@ -49,6 +50,7 @@ def check():
         assert source.read_bytes() == (PACKAGE / 'app/paper_scanner/assets' / source.name).read_bytes()
     assert (ROOT / 'main.py').read_bytes() == (PACKAGE / 'app/main.py').read_bytes()
     assert (ROOT / 'scripts/windows/launch.py').read_bytes() == (PACKAGE / 'app/launch.py').read_bytes()
+    assert (ROOT / 'docs/命令行使用说明.md').read_bytes() == (PACKAGE / '命令行使用说明.md').read_bytes()
     for path in (PACKAGE / 'app').rglob('*.py'):
         ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
     info_path = PACKAGE / 'build-info.json'
@@ -76,8 +78,8 @@ def check():
                  for p in directory.iterdir() if p.is_file()}
         missing = sorted(name for name in imports if name not in local and not is_system(name))
         assert not missing, f'{path.relative_to(PACKAGE)} 缺少 DLL：{missing}'
-        if path == PACKAGE / '纸页扫描.exe':
-            assert pe.OPTIONAL_HEADER.Subsystem == 2
+        if path.name in {'纸页扫描.exe', '纸页扫描-cli.exe'} and path.parent == PACKAGE:
+            assert pe.OPTIONAL_HEADER.Subsystem == (3 if path.stem.endswith('-cli') else 2)
             manifests = []
             for entry in pe.DIRECTORY_ENTRY_RESOURCE.entries:
                 if entry.id == 24:
@@ -94,7 +96,6 @@ def check():
         report.append({'path': str(path.relative_to(PACKAGE)), 'imports': sorted(imports)})
         pe.close()
     info['validation']['binary_and_resource_check'] = f'通过：{len(report)} 个 x64 PE 文件，DLL、UTF-8 清单、Python 入口、源码和四份模型齐全'
-    info['validation']['python312_source_check_on_macos'] = '21 项测试通过；四模型、界面线程和导出自检通过；不代表 Windows 实机验收'
     info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding='utf-8')
     report_path = ROOT / 'artifacts/windows-build/pe-dependencies.json'
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

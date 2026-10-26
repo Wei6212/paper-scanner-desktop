@@ -24,6 +24,7 @@ def compile_launcher():
     zig = [sys.executable, '-m', 'ziglang']
     subprocess.run(zig + ['rc', '/c', '65001', '/fo', 'app.res', 'app.rc'], cwd=CACHE, check=True)
     subprocess.run(zig + ['cc', '-target', 'x86_64-windows-gnu', '-O2', '-s', '-municode', '-Wl,--subsystem,windows', str(source / 'launcher.c'), 'app.res', '-o', '纸页扫描.exe', '-lshell32', '-luser32'], cwd=CACHE, check=True)
+    subprocess.run(zig + ['cc', '-target', 'x86_64-windows-gnu', '-O2', '-s', '-municode', '-DCONSOLE_LAUNCHER', '-Wl,--subsystem,console', str(source / 'launcher.c'), 'app.res', '-o', '纸页扫描-cli.exe', '-lshell32', '-luser32'], cwd=CACHE, check=True)
 
 
 def extract_safe(archive: zipfile.ZipFile, destination: Path):
@@ -89,6 +90,8 @@ def build():
     shutil.copy2(ROOT / 'main.py', app / 'main.py')
     shutil.copy2(ROOT / 'scripts/windows/launch.py', app / 'launch.py')
     shutil.copy2(CACHE / '纸页扫描.exe', staging / '纸页扫描.exe')
+    shutil.copy2(CACHE / '纸页扫描-cli.exe', staging / '纸页扫描-cli.exe')
+    shutil.copy2(ROOT / 'docs/命令行使用说明.md', staging / '命令行使用说明.md')
     # 自检样例为自动生成的图形，不将用户提供的照片打入分享包。
     image = Image.new('RGB', (1200, 900), '#847c67')
     draw = ImageDraw.Draw(image)
@@ -101,6 +104,7 @@ def build():
     diagnostic = '''@echo off\r\nchcp 65001 >nul\r\nset "QT_QPA_PLATFORM=offscreen"\r\nstart "" /wait "%~dp0纸页扫描.exe" --self-test "%~dp0app\\diagnostic.png" "%TEMP%\\PaperScannerCheck"\r\nif errorlevel 1 (\r\n echo 自检未通过。启动记录位于："%LOCALAPPDATA%\\PaperScanner\\logs\\startup.log"\r\n) else (\r\n echo 自检完成，结果位于："%TEMP%\\PaperScannerCheck"\r\n)\r\npause\r\n'''
     (staging / '运行自检.cmd').write_bytes(diagnostic.encode('utf-8'))
     instructions = '''纸页扫描 · Windows 64 位便携版\r\n\r\n使用方法\r\n1. 将整个压缩包解压到一个目录。\r\n2. 双击“纸页扫描.exe”。无需安装 Python，无需联网处理图片。\r\n3. 选择图片目录，设置导出尺寸、文件上限和输出目录，再点击批量导出。\r\n\r\n注意：请保留 app、runtime 文件夹与 exe 的相对位置，不能单独复制 exe。\r\n支持 Windows 10 1903 或更新版本、Windows 11，均为 64 位。\r\n保留原图，同名结果自动编号；包含纸面铺满、曲面展平和自定义分辨率功能。\r\n\r\n启动异常时\r\n运行“运行自检.cmd”。记录在 %LOCALAPPDATA%\\PaperScanner\\logs\\startup.log。\r\n自检会在本机临时目录生成测试图片，不会上传任何文件。\r\n\r\n验证状态\r\n本包已完成 Windows x64 二进制、DLL 依赖、模型及资源静态核查。\r\n本轮构建环境为 macOS，尚未在原生 Windows 上完成启动和图片处理验收。\r\n'''
+    instructions += '''\r\n命令行批处理\r\n使用“纸页扫描-cli.exe”，不显示界面，完成后返回退出码。\r\n示例：纸页扫描-cli.exe -i "D:\\photo" -o "E:\\output" -s 90 -e 50\r\n-s 为缩放百分比，-e 为增强强度；--json 输出结构化结果。\r\n完整参数、智能体调用和退出码见“命令行使用说明.md”。\r\n两个 exe 均需保留 app、runtime 文件夹。\r\n'''
     (staging / '使用说明.txt').write_bytes(b'\xef\xbb\xbf' + instructions.encode('utf-8'))
     info = {'application': '纸页扫描', 'version': '0.1.0', 'platform': 'Windows x64', 'python': '3.12.10', 'python_md5_official': PYTHON_MD5, 'wheels': records, 'models': {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (app / 'models').glob('*.mnn')}, 'validation': {'binary_and_resource_check': '待核查', 'native_windows_execution': '未执行：当前主机为 macOS arm64'}}
     (staging / 'build-info.json').write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding='utf-8')

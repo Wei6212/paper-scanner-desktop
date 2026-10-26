@@ -130,7 +130,8 @@ def save_unique(encoded: EncodedImage, directory: Path, stem: str, format_name: 
             temporary = Path(handle.name)
             handle.write(encoded.data)
         os.replace(temporary, candidate)
-    except Exception:
+    except BaseException:
+        # Ctrl+C 也要清理预留文件和临时文件，避免留下空的扫描结果。
         candidate.unlink(missing_ok=True)
         if temporary:
             temporary.unlink(missing_ok=True)

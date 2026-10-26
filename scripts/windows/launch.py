@@ -13,6 +13,7 @@ RUNTIME = ROOT / 'runtime'
 SITE = RUNTIME / 'Lib' / 'site-packages'
 DLL_HANDLES = []
 LOG = None
+CLI = len(sys.argv) > 1 and not (len(sys.argv) == 4 and sys.argv[1] == '--self-test')
 
 
 def prepare():
@@ -20,10 +21,17 @@ def prepare():
     directory = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'PaperScanner' / 'logs'
     directory.mkdir(parents=True, exist_ok=True)
     LOG = (directory / 'startup.log').open('a', encoding='utf-8', buffering=1)
-    sys.stdout = sys.stderr = LOG
+    if not CLI:
+        sys.stdout = sys.stderr = LOG
+    else:
+        # 管道由调用方持有；命令行结果不能被启动日志截走。
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, 'w', encoding='utf-8')
     faulthandler.enable(LOG)
-    print(f'\n--- 启动 {datetime.now().isoformat(timespec="seconds")} ---')
-    print('程序目录：', ROOT)
+    print(f'\n--- 启动 {datetime.now().isoformat(timespec="seconds")} ---', file=LOG)
+    print('程序目录：', ROOT, file=LOG)
     for path in [RUNTIME, SITE, SITE / 'PySide6', SITE / 'shiboken6', SITE / 'numpy.libs', SITE / 'cv2']:
         if path.is_dir():
             DLL_HANDLES.append(os.add_dll_directory(str(path)))
@@ -43,5 +51,8 @@ except Exception:
     details = traceback.format_exc()
     if LOG:
         LOG.write(details)
-    ctypes.windll.user32.MessageBoxW(None, '应用启动失败。\n\n请将整个文件夹重新解压后重试。\n详细记录位于：%LOCALAPPDATA%\\PaperScanner\\logs\\startup.log\n\n' + str(sys.exc_info()[1]), '纸页扫描', 0x10)
+    if CLI:
+        print(details, file=sys.stderr)
+    else:
+        ctypes.windll.user32.MessageBoxW(None, '应用启动失败。\n\n请将整个文件夹重新解压后重试。\n详细记录位于：%LOCALAPPDATA%\\PaperScanner\\logs\\startup.log\n\n' + str(sys.exc_info()[1]), '纸页扫描', 0x10)
     raise SystemExit(1)
