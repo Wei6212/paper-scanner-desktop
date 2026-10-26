@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+build/
+dist/
+artifacts/
+*.spec
+.DS_Store
+/base.apk
+/analysis/
+.env
+.env.*
+!.env.example

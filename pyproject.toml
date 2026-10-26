@@ -1,0 +1,13 @@
+[project]
+name = "paper-scanner"
+version = "0.1.0"
+description = "本地文档扫描与批量图片导出"
+requires-python = ">=3.11,<3.13"
+dependencies = ["MNN>=3.2,<4", "numpy>=1.26,<3", "opencv-python-headless>=4.10,<6", "Pillow>=10,<14", "PySide6-Essentials>=6.8,<7"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pyinstaller>=6,<7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
