@@ -38,6 +38,28 @@ def test_unlimited_original_does_not_resize():
     assert not result.resized_for_limit
 
 
+@pytest.mark.parametrize('max_mb', [None, 0.01])
+def test_binary_png_stays_binary_after_scaling_and_size_limit(max_mb):
+    pixels = np.random.default_rng(3).integers(0, 2, (900, 1200), dtype=np.uint8) * 255
+    image = Image.fromarray(pixels).convert('1', dither=Image.Dither.NONE)
+    encoded = encode_image(image, ExportOptions(mode='percent', percent=75, format='PNG', max_mb=max_mb))
+    with Image.open(BytesIO(encoded.data)) as output:
+        assert output.mode == '1'
+        assert set(output.convert('L').tobytes()) == {0, 255}
+    assert encoded.resized_for_limit == (max_mb is not None)
+    if max_mb is not None:
+        assert len(encoded.data) <= 10_000
+
+
+def test_binary_image_can_still_export_as_jpeg():
+    image = Image.new('1', (20, 20), 1)
+    image.putpixel((10, 10), 0)
+    encoded = encode_image(image, ExportOptions())
+    with Image.open(BytesIO(encoded.data)) as output:
+        assert output.format == 'JPEG'
+        assert output.size == image.size
+
+
 def test_save_never_overwrites_source_or_prior_result(tmp_path):
     source = tmp_path / '文档.jpg'
     source.write_bytes(b'original')

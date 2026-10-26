@@ -31,6 +31,7 @@ def check():
     required = [PACKAGE / '纸页扫描.exe', PACKAGE / '纸页扫描-cli.exe',
                 PACKAGE / '命令行使用说明.md', PACKAGE / 'app/paper_scanner/cli.py', runtime / 'python312.dll',
                 runtime / 'python3.dll', runtime / 'python312.zip',
+                site / 'cv2.pyd', site / 'OpenCV-LICENSE.txt', site / 'OpenCV-NOTICES.txt', site / 'zlib-LICENSE.txt',
                 site / '_mnncengine.cp312-win_amd64.pyd',
                 site / 'PySide6/plugins/platforms/qwindows.dll',
                 site / 'PySide6/plugins/platforms/qoffscreen.dll',
@@ -55,6 +56,15 @@ def check():
         ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
     info_path = PACKAGE / 'build-info.json'
     info = json.loads(info_path.read_text())
+    opencv = info['opencv_minimal']
+    assert opencv['target'] == 'windows-x64'
+    assert opencv['modules'] == ['core', 'flann', 'geometry', 'imgproc', 'python3']
+    assert hashlib.sha256((site / 'cv2.pyd').read_bytes()).hexdigest() == opencv['sha256']
+    assert not (site / 'cv2').exists(), '仍带入通用 OpenCV 包'
+    assert not list(site.rglob('*ffmpeg*')), '仍带入视频编解码库'
+    assert not list((site / 'PIL').glob('_avif*.pyd')), '仍带入 AVIF 扩展'
+    for name in ('QtQuick.pyd', 'QtQml.pyd', 'QtDesigner.pyd', 'Qt6Quick.dll', 'Qt6Qml.dll'):
+        assert not (site / 'PySide6' / name).exists(), f'仍带入未使用的 Qt 模块：{name}'
     assert len(info['models']) == 4
     for name, expected in info['models'].items():
         model = PACKAGE / 'app/models' / name
@@ -64,7 +74,7 @@ def check():
     assert not any(p.suffix in {'.apk', '.dylib', '.so'} or p.name == '.DS_Store' for p in files)
     assert not (site / 'MNN/tools').exists()
     search_dirs = [runtime, site, site / 'PySide6', site / 'shiboken6',
-                   site / 'numpy.libs', site / 'cv2']
+                   site / 'numpy.libs']
     report = []
     for path in files:
         if path.suffix.lower() not in {'.exe', '.dll', '.pyd'}:

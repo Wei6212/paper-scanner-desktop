@@ -32,6 +32,8 @@
 | `models/` | 检测、增强、两阶段曲面展平，共四份 `.mnn` 模型 |
 | `tests/` | 引擎、导出、纸边、画布、控件、缩略图及 CLI 测试 |
 | `scripts/build_app.py` | macOS 应用打包 |
+| `scripts/build_opencv_minimal.py` | 为 macOS / Windows 构建精简 OpenCV，不覆盖开发环境 |
+| `scripts/portable_dependencies.py` | 精简扩展校验、Windows Qt DLL 依赖闭包及非运行资源裁剪 |
 | `scripts/build_windows_portable.py` | Windows x64 便携包组装与两个入口的交叉编译 |
 | `scripts/windows/launcher.c` | Windows 启动器，在当前进程加载嵌入式 Python 并传递参数 |
 | `scripts/windows/launch.py` | Windows 本地 DLL、Qt 路径、日志和异常处理 |
@@ -97,6 +99,9 @@ Windows 开发环境将 `.venv/bin/python` 换成 `.venv\Scripts\python.exe`。W
 | `-i` / `-o` | 输入图片或目录、输出目录，均必填 |
 | `-s 90` | 按校正后宽高的 90% 导出，范围 1～200，默认 100 |
 | `-e 50` | 增强强度 50%，范围 0～100，默认 100 |
+| `--black-white` | 在校正与增强之后转纯黑白，默认关闭；不受 `-e 0` 影响 |
+| `--black-threshold 180` | 灰度低于阈值转黑，其余转白；整数 1～255，默认 180 |
+| `--stroke-radius 1` | 黑白模式的笔画加粗半径，整数 0～3 像素；0 不加粗，默认 1 |
 | `--no-crop -e 0` | 关闭检测裁剪与增强，适合单纯缩放或转换格式 |
 | `--width` / `--height` | 等比例适配最大宽高，不能与 `-s` 同用 |
 | `-r` / `--recursive` | 包含子目录，默认只处理当前层 |
@@ -119,6 +124,7 @@ Windows 运行时缺失等 Python 启动前错误可能仅返回 stderr 和退�
 
 - `Scanner` 记录创建线程，只能在该线程使用。GUI 经 `Worker` 后台处理，CLI 在当前线程顺序处理，不要跨线程共享引擎实例。
 - 处理算法修改放在 `engine.py` / `edges.py`，尺寸、编码、保存修改放在 `exporting.py`；GUI 和 CLI 直接复用，不复制另一套算法。
+- 黑白文字使用 `engine.binarize_text`，输出 Pillow `1` 模式；PNG 缩放后重新二值化，JPEG 不保证纯黑白。加粗半径作用于校正后完整分辨率，不能推断完全缺失的笔画。
 - CLI 不导入 GUI，不创建 `QApplication`；`--help` 不应加载 Qt、OpenCV 或模型。
 - JSON 模式隔离 Python 及原生依赖的 stdout，包括解释器退出时的缓冲日志；新增日志应写入 stderr。
 - `save_unique` 使用排他创建和临时文件替换。不要改成覆盖写入；异常和 Ctrl+C 时应清理当前未完成的输出。
@@ -137,7 +143,7 @@ Windows 构建需要额外构建工具和缓存输入，不能只凭当前 `.ven
 .venv/bin/python scripts/check_windows_portable.py
 ```
 
-构建脚本重新生成 `dist/纸页扫描-Windows-x64/`，会替换该生成目录；不要在其中保存需要保留的用户数据。`check_windows_portable.py` 为静态检查，不执行 Windows 程序。macOS 包使用 `scripts/build_app.py`，构建同样会更新生成产物。
+两个平台打包前都需按 [打包体积优化](docs/打包体积优化.md)构建对应平台的精简 OpenCV；缺少或校验失败时停止，不回退到通用版。构建脚本重新生成 `dist/纸页扫描-Windows-x64/`，会替换该生成目录；不要在其中保存需要保留的用户数据。`check_windows_portable.py` 为静态检查，不执行 Windows 程序。macOS 包使用 `scripts/build_app.py`，构建同样会更新生成产物。
 
 提交应包含代码、必要测试和对应文档。`dist/`、`artifacts/`、`.venv/`、`build/` 等生成目录不进入 Git；便携包的分发与源码推送是不同操作。
 

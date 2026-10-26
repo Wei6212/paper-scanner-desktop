@@ -2,7 +2,60 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from paper_scanner.engine import read_image, validate_quad, warp_document
+from paper_scanner.engine import ScanOptions, Scanner, binarize_text, read_image, validate_quad, warp_document
+
+
+def test_black_white_threshold_boundary_and_source_preserved():
+    values = np.array([[0, 125, 179, 180, 254, 255]], dtype=np.uint8)
+    rgb = np.repeat(values[..., None], 3, axis=2)
+    original = rgb.copy()
+    image = binarize_text(rgb, 180, 0)
+    assert image.mode == '1'
+    assert list(image.convert('L').tobytes()) == [0, 0, 0, 255, 255, 255]
+    assert np.array_equal(rgb, original)
+    assert list(binarize_text(rgb, 1, 0).convert('L').tobytes()) == [0, 255, 255, 255, 255, 255]
+    assert list(binarize_text(rgb, 255, 0).convert('L').tobytes()) == [0, 0, 0, 0, 0, 255]
+
+
+def test_stroke_growth_connects_small_gap_without_black_frame():
+    rgb = np.full((15, 15, 3), 255, dtype=np.uint8)
+    rgb[4:11, 5] = 125
+    rgb[4:11, 7] = 125
+    plain = np.asarray(binarize_text(rgb, 180, 0).convert('L'))
+    bold = np.asarray(binarize_text(rgb, 180, 1).convert('L'))
+    assert plain[7, 6] == 255
+    assert bold[7, 6] == 0
+    assert np.count_nonzero(bold == 0) > np.count_nonzero(plain == 0)
+    assert np.all(bold[plain == 0] == 0)
+    assert np.all(bold[0] == 255) and np.all(bold[-1] == 255)
+    assert np.all(bold[:, 0] == 255) and np.all(bold[:, -1] == 255)
+
+
+@pytest.mark.parametrize('level', [0, 255])
+@pytest.mark.parametrize('radius', [0, 1, 2, 3])
+def test_black_white_uniform_and_tiny_images(level, radius):
+    image = binarize_text(np.full((1, 1, 3), level, dtype=np.uint8), 180, radius)
+    assert image.convert('L').getpixel((0, 0)) == level
+
+
+@pytest.mark.parametrize('threshold,radius', [(0, 1), (256, 1), (125.5, 1), (180, -1), (180, 4), (180, 0.5)])
+def test_black_white_invalid_parameters(threshold, radius):
+    with pytest.raises(ValueError):
+        binarize_text(np.full((3, 3, 3), 255, dtype=np.uint8), threshold, radius)
+
+
+def test_black_white_runs_after_enhancement_and_remains_optional(tmp_path, monkeypatch):
+    path = tmp_path / '淡字.png'
+    Image.new('RGB', (12, 10), (210, 210, 210)).save(path)
+    monkeypatch.setattr(Scanner, 'enhance', lambda self, rgb, strength: np.full_like(rgb, 125))
+    scanner = Scanner()
+    color = scanner.process(path, ScanOptions(auto_crop=False))
+    assert color.image.getpixel((0, 0)) == (125, 125, 125)
+    binary = scanner.process(path, ScanOptions(auto_crop=False, black_white=True, stroke_radius=0))
+    assert binary.image.convert('L').getpixel((0, 0)) == 0
+    assert binary.original.getpixel((0, 0)) == (210, 210, 210)
+    raw = scanner.process(path, ScanOptions(auto_crop=False, enhance=False, black_white=True))
+    assert raw.image.convert('L').getpixel((0, 0)) == 255
 
 
 def test_perspective_crop_keeps_colors_and_content():

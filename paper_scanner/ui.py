@@ -491,7 +491,7 @@ class MainWindow(QMainWindow):
         self.close_when_done = False
         self.batch_ok = self.batch_failed = 0
         self.is_exporting = False
-        self.strength_preview_pending = False
+        self.preview_pending = False
         self.source_folder = None
         self.thumbnail_loader = ThumbnailLoader(self)
         self.thumbnail_loader.ready.connect(self._thumbnail_ready)
@@ -673,7 +673,6 @@ class MainWindow(QMainWindow):
         split.addWidget(center)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumWidth(260)
         right = QFrame()
         right.setObjectName('panel')
         controls = QVBoxLayout(right)
@@ -706,6 +705,27 @@ class MainWindow(QMainWindow):
         self.strength.setValue(100)
         self.strength.valueChanged.connect(self.strength_changed)
         controls.addWidget(self.strength)
+        self.black_white = QCheckBox('黑白文字（淡字转黑、笔画加粗）')
+        self.black_white.setToolTip('在去阴影和彩色增强后转纯黑白，彩色印章等也会转黑白。勾选或取消勾选后自动更新预览，每次启动默认关闭。')
+        self.black_white.toggled.connect(self._update_options)
+        self.black_white.toggled.connect(self._request_preview)
+        controls.addWidget(self.black_white)
+        self.black_threshold = QSpinBox()
+        self.black_threshold.setRange(1, 255)
+        self.black_threshold.setValue(180)
+        self.black_threshold.setToolTip('灰度低于阈值转黑，其余转白。值越大保留的淡字越多，也越容易带入背景。关闭彩色增强可直接按原图灰度判断。')
+        self.stroke_radius = QSpinBox()
+        self.stroke_radius.setRange(0, 3)
+        self.stroke_radius.setValue(1)
+        self.stroke_radius.setSuffix(' px')
+        self.stroke_radius.setToolTip('在校正后的完整分辨率上向外扩展黑色笔画；0 不加粗。过大会导致相邻笔画粘连，无法恢复完全缺失的笔画。')
+        for caption, widget in (('黑白阈值', self.black_threshold), ('加粗半径', self.stroke_radius)):
+            row = QHBoxLayout()
+            row.addWidget(label(caption))
+            row.addStretch()
+            row.addWidget(widget)
+            controls.addLayout(row)
+        controls.addWidget(label('纯黑白请导出 PNG；JPEG 压缩会产生灰度。', 'muted', True))
         controls.addSpacing(8)
         controls.addWidget(label('导出分辨率', 'section'))
         self.size_mode = QComboBox()
@@ -791,11 +811,19 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.export_button)
         footer.addWidget(self.cancel_button)
         settings_layout.addLayout(footer)
+        # 按完整设置内容预留宽度，包含自定义宽高、边框和纵向滚动条。
+        scroll.setMinimumWidth(max(
+            360,
+            right.minimumSizeHint().width()
+            + scroll.verticalScrollBar().sizeHint().width()
+            + 2 * scroll.frameWidth(),
+        ))
         split.addWidget(settings_panel)
+        split.setCollapsible(2, False)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setStretchFactor(2, 0)
-        split.setSizes([210, 800, 290])
+        split.setSizes([210, 730, max(380, settings_panel.minimumSizeHint().width())])
         body.addWidget(split, 1)
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
@@ -803,7 +831,7 @@ class MainWindow(QMainWindow):
         self.status_label = label('就绪 · 支持 JPG、PNG、TIFF、BMP、WebP', 'muted')
         body.addWidget(self.status_label)
         outer.addLayout(body, 1)
-        self.mutating_controls = [self.source_button, self.add_button, self.clear_button, self.file_list, self.recursive, self.auto_crop, self.auto_enhance, self.fill_frame_check, self.curve_check, self.strength, self.size_mode, self.percent, self.dimensions, self.limit_check, self.max_mb, self.format, self.quality, self.output_path, self.output_button, self.preview_button, self.rotate_button, self.reset_button, self.export_button]
+        self.mutating_controls = [self.source_button, self.add_button, self.clear_button, self.file_list, self.recursive, self.auto_crop, self.auto_enhance, self.fill_frame_check, self.curve_check, self.strength, self.black_white, self.black_threshold, self.stroke_radius, self.size_mode, self.percent, self.dimensions, self.limit_check, self.max_mb, self.format, self.quality, self.output_path, self.output_button, self.preview_button, self.rotate_button, self.reset_button, self.export_button]
         self._update_enabled()
 
     def show_about(self):
@@ -840,9 +868,14 @@ class MainWindow(QMainWindow):
         self.format.setCurrentText(self.settings.value('format', 'JPEG'))
         self.limit_check.setChecked(self.settings.value('limit', False, type=bool))
         self.thumbnail_check.setChecked(self.settings.value('show_thumbnails', False, type=bool))
+        self.black_white.setChecked(False)
+        self.black_threshold.setValue(int(self.settings.value('black_threshold', 180)))
+        self.stroke_radius.setValue(int(self.settings.value('stroke_radius', 1)))
 
     def _save_settings(self):
         self.settings.setValue('show_thumbnails', self.thumbnail_check.isChecked())
+        self.settings.setValue('black_threshold', self.black_threshold.value())
+        self.settings.setValue('stroke_radius', self.stroke_radius.value())
         for key, value in {'size_mode': self.size_mode.currentIndex(), 'percent': self.percent.value(), 'width': self.width_input.value(), 'height': self.height_input.value(), 'max_mb': self.max_mb.value(), 'quality': self.quality.value(), 'format': self.format.currentText(), 'limit': self.limit_check.isChecked()}.items():
             self.settings.setValue(key, value)
 
@@ -852,9 +885,11 @@ class MainWindow(QMainWindow):
         index = self.size_mode.currentIndex()
         self.percent.setVisible(index == 3)
         self.dimensions.setVisible(index == 4)
-        self.max_mb.setEnabled(self.limit_check.isChecked())
-        self.fill_frame_check.setEnabled(self.auto_crop.isChecked() and self.auto_enhance.isChecked())
-        self.quality.setEnabled(self.format.currentText() == 'JPEG')
+        self.max_mb.setEnabled(self.limit_check.isChecked() and self.worker is None)
+        self.fill_frame_check.setEnabled(self.auto_crop.isChecked() and self.auto_enhance.isChecked() and self.worker is None)
+        self.black_threshold.setEnabled(self.black_white.isChecked() and self.worker is None)
+        self.stroke_radius.setEnabled(self.black_white.isChecked() and self.worker is None)
+        self.quality.setEnabled(self.format.currentText() == 'JPEG' and self.worker is None)
         self.size_help.setText(['保留校正后的完整像素。', '宽、高各为原来的 70%。', '宽、高各为原来的 50%。', '按输入百分比等比例缩放。', '保持长宽比；同时填写时适配最大宽高。'][index])
 
     def _update_enabled(self):
@@ -1063,16 +1098,22 @@ class MainWindow(QMainWindow):
             self.start_preview()
 
     def scan_options(self):
-        return ScanOptions(self.auto_crop.isChecked(), self.auto_enhance.isChecked(), self.strength.value() / 100, self.curve_check.isChecked(), self.fill_frame_check.isChecked())
+        return ScanOptions(auto_crop=self.auto_crop.isChecked(), enhance=self.auto_enhance.isChecked(),
+                           strength=self.strength.value() / 100, dewarp=self.curve_check.isChecked(),
+                           fill_frame=self.fill_frame_check.isChecked(), black_white=self.black_white.isChecked(),
+                           black_threshold=self.black_threshold.value(), stroke_radius=self.stroke_radius.value())
 
     def strength_changed(self, value):
         self.strength_label.setText(f'{value}%')
+        self._request_preview()
+
+    def _request_preview(self, *args):
         if not self.selected() or self.close_when_done:
             return
         if self.worker:
-            # 计算期间只保留一次刷新请求，下一次直接读取滑块的最新值。
-            if not self.is_exporting:
-                self.strength_preview_pending = True
+            # 计算期间合并刷新请求，完成后读取最新的强度与模式开关。
+            if not self.is_exporting and not self.worker.cancel_event.is_set():
+                self.preview_pending = True
             return
         self.start_preview()
 
@@ -1091,7 +1132,7 @@ class MainWindow(QMainWindow):
         self.original_canvas.editable = False
         self.original_canvas.update()
         for widget in self.mutating_controls:
-            if widget is self.strength and not exporting:
+            if widget in (self.strength, self.black_white) and not exporting:
                 continue
             widget.setEnabled(False)
         self.cancel_button.setVisible(True)
@@ -1107,7 +1148,7 @@ class MainWindow(QMainWindow):
         item = self.selected()
         if not item or self.worker:
             return
-        self.strength_preview_pending = False
+        self.preview_pending = False
         self.show_message('正在识别纸边与生成扫描预览…')
         self._launch(Worker([WorkItem(item.path, item.rotation, item.corners)], self.scan_options(), parent=self))
 
@@ -1183,18 +1224,19 @@ class MainWindow(QMainWindow):
         elif cancelled:
             self.show_message('预览已取消')
         else:
-            self.status_label.setText('就绪 · 拖动增强强度自动更新预览，其他扫描设置修改后点击更新预览')
+            self.status_label.setText('就绪 · 增强强度和黑白文字开关自动更新预览，其他扫描设置修改后点击更新预览')
         worker.deleteLater()
         if self.close_when_done:
             self.close()
-        elif self.strength_preview_pending and not cancelled:
+        elif self.preview_pending and not cancelled:
             self.start_preview()
 
     def cancel(self):
-        self.strength_preview_pending = False
+        self.preview_pending = False
         if self.worker:
             self.worker.cancel()
             self.strength.setEnabled(False)
+            self.black_white.setEnabled(False)
             self.cancel_button.setEnabled(False)
             self.status_label.setText('正在停止，等待当前计算完成…')
 

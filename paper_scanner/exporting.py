@@ -70,18 +70,29 @@ def target_size(size: tuple[int, int], options: ExportOptions) -> tuple[int, int
 def _encode(image: Image.Image, options: ExportOptions, quality: int) -> bytes:
     buffer = BytesIO()
     if options.format == 'JPEG':
+        if image.mode == '1':
+            image = image.convert('RGB')
         image.save(buffer, 'JPEG', quality=quality, subsampling=0, optimize=False)
     else:
         image.save(buffer, 'PNG', optimize=True)
     return buffer.getvalue()
 
 
+def _resize(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    if image.mode == '1':
+        # 缩放后重新二值化，既保留抗锯齿采样，又避免 PNG 中重新出现灰度。
+        gray = image.convert('L').resize(size, Image.Resampling.LANCZOS)
+        return gray.point(lambda value: 255 if value >= 128 else 0, mode='1')
+    return image.resize(size, Image.Resampling.LANCZOS)
+
+
 def encode_image(image: Image.Image, options: ExportOptions) -> EncodedImage:
     """优先保持像素，必要时在质量下限后缩图；每次返回前核对字节数。"""
     requested = target_size(image.size, options)
-    image = image.convert('RGB')
+    if image.mode != '1':
+        image = image.convert('RGB')
     if image.size != requested:
-        image = image.resize(requested, Image.Resampling.LANCZOS)
+        image = _resize(image, requested)
     limit = int(options.max_mb * 1_000_000) if options.max_mb is not None else None
     for _ in range(80):
         data = _encode(image, options, options.quality)
@@ -106,7 +117,7 @@ def encode_image(image: Image.Image, options: ExportOptions) -> EncodedImage:
             raise ValueError('文件上限过小，无法生成符合上限的图片')
         factor = min(0.9, max(0.1, math.sqrt(limit / len(smallest)) * 0.92))
         next_size = max(1, int(image.width * factor)), max(1, int(image.height * factor))
-        image = image.resize(next_size, Image.Resampling.LANCZOS)
+        image = _resize(image, next_size)
     raise ValueError('无法在指定体积内完成导出，请提高文件上限')
 
 

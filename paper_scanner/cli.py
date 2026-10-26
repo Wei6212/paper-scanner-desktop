@@ -32,6 +32,9 @@ def create_parser():
     parser.add_argument('-o', '--output', type=Path, metavar='DIR', help='输出目录，必填；同名文件自动编号')
     parser.add_argument('-s', '--scale', type=float, metavar='PERCENT', help='校正后宽高的缩放百分比，1～200，默认 100')
     parser.add_argument('-e', '--enhance', type=float, default=100, metavar='PERCENT', help='增强强度，0～100，默认 100；0 表示关闭增强')
+    parser.add_argument('--black-white', action='store_true', help='启用黑白文字模式；彩色内容也会转黑白，建议导出 PNG')
+    parser.add_argument('--black-threshold', type=int, default=180, metavar='N', help='灰度低于此值转黑，其余转白；1～255，默认 180，仅黑白模式生效')
+    parser.add_argument('--stroke-radius', type=int, default=1, metavar='PIXELS', help='黑色笔画加粗半径，0～3 像素，默认 1；0 不加粗，仅黑白模式生效')
     parser.add_argument('-r', '--recursive', action='store_true', help='递归扫描输入目录的子目录')
     parser.add_argument('--width', type=int, metavar='PIXELS', help='输出最大宽度，保持比例，不能与 -s 同用')
     parser.add_argument('--height', type=int, metavar='PIXELS', help='输出最大高度，保持比例，不能与 -s 同用')
@@ -53,6 +56,10 @@ def validate_options(args):
         raise ValueError('必须使用 -i 指定输入，并使用 -o 指定输出目录；--help 可查看说明')
     if not math.isfinite(args.enhance) or not 0 <= args.enhance <= 100:
         raise ValueError('增强强度必须在 0 到 100 之间')
+    if not 1 <= args.black_threshold <= 255:
+        raise ValueError('黑白阈值必须在 1 到 255 之间')
+    if not 0 <= args.stroke_radius <= 3:
+        raise ValueError('笔画加粗半径必须在 0 到 3 之间')
     if args.scale is not None and (not math.isfinite(args.scale) or not 1 <= args.scale <= 200):
         raise ValueError('缩放比例必须在 1 到 200 之间')
     custom = args.width is not None or args.height is not None
@@ -144,7 +151,8 @@ def run_batch(args, report, export):
     report['total'] = len(paths)
     output.mkdir(parents=True, exist_ok=True)
     scan = ScanOptions(auto_crop=not args.no_crop, enhance=args.enhance > 0,
-                       strength=args.enhance / 100, dewarp=args.dewarp, fill_frame=not args.no_fill_frame)
+                       strength=args.enhance / 100, dewarp=args.dewarp, fill_frame=not args.no_fill_frame,
+                       black_white=args.black_white, black_threshold=args.black_threshold, stroke_radius=args.stroke_radius)
     scanner = Scanner()
     try:
         for index, path in enumerate(paths, 1):

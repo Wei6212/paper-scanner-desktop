@@ -77,6 +77,9 @@ class ScanOptions:
     strength: float = 1.0
     dewarp: bool = False
     fill_frame: bool = True
+    black_white: bool = False
+    black_threshold: int = 180
+    stroke_radius: int = 1
 
 
 @dataclass
@@ -119,6 +122,22 @@ def warp_document(rgb: np.ndarray, normalized: np.ndarray) -> np.ndarray:
     target = np.float32([[0, 0], [out_width - 1, 0], [out_width - 1, out_height - 1], [0, out_height - 1]])
     matrix = cv2.getPerspectiveTransform(points, target)
     return cv2.warpPerspective(rgb, matrix, (out_width, out_height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def binarize_text(rgb: np.ndarray, threshold: int, stroke_radius: int) -> Image.Image:
+    """低于阈值的像素转黑，再向周围扩展黑色笔画；返回无灰度的图像。"""
+    if not isinstance(threshold, int) or not 1 <= threshold <= 255:
+        raise ValueError('黑白阈值必须是 1 到 255 之间的整数')
+    if not isinstance(stroke_radius, int) or not 0 <= stroke_radius <= 3:
+        raise ValueError('笔画加粗半径必须是 0 到 3 之间的整数')
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    # 膨胀以白色为前景，先将文字置白，处理后再反转回黑字白底。
+    ink = (gray < threshold).astype(np.uint8) * 255
+    if stroke_radius:
+        size = stroke_radius * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+        ink = cv2.dilate(ink, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+    return Image.fromarray(cv2.bitwise_not(ink)).convert('1', dither=Image.Dither.NONE)
 
 
 class Scanner:
@@ -267,4 +286,6 @@ class Scanner:
             if options.auto_crop and options.fill_frame:
                 rgb = fill_document_frame(unenhanced, rgb)
         self._check(cancel)
-        return ScanResult(original, Image.fromarray(rgb), normalized, warning, time.monotonic() - started)
+        image = binarize_text(rgb, options.black_threshold, options.stroke_radius) if options.black_white else Image.fromarray(rgb)
+        self._check(cancel)
+        return ScanResult(original, image, normalized, warning, time.monotonic() - started)

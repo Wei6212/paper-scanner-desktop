@@ -72,6 +72,8 @@ runpy.run_path('main.py', run_name='__main__')
     ['--quality', '59'], ['--max-mb', 'nan'], ['--max-mb', '0.001'],
     ['--width', '-2'], ['--width', '0'], ['--width', '30001'],
     ['--width', '40', '-s', '50'], ['--rotate', '45'], ['--unknown'],
+    ['--black-threshold', '0'], ['--black-threshold', '256'], ['--black-threshold', '125.5'],
+    ['--stroke-radius', '-1'], ['--stroke-radius', '4'],
 ])
 def test_invalid_parameters_fail_before_writing(source, tmp_path, extra):
     output = tmp_path / '结果'
@@ -249,3 +251,35 @@ runpy.run_path('main.py', run_name='__main__')
 '''
     _, report = invoke_json('-i', source, '-o', tmp_path / '输出', '--no-crop', '-e', '0', code=code)
     assert report['status'] == 'success'
+
+
+@pytest.mark.parametrize('radius', [0, 1])
+def test_black_white_cli_exports_pure_binary_without_models(tmp_path, radius):
+    path = tmp_path / '淡字.png'
+    image = Image.new('RGB', (60, 40), (225, 225, 225))
+    for y in range(10, 30):
+        image.putpixel((25, y), (125, 125, 125))
+    image.save(path)
+    original = path.read_bytes()
+    code = '''
+import builtins
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name.startswith(('PySide6', 'MNN')):
+        raise AssertionError('黑白处理不应加载界面或模型')
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+from paper_scanner.cli import main
+raise SystemExit(main())
+'''
+    result, report = invoke_json('-i', path, '-o', tmp_path / '输出', '--no-crop', '-e', '0',
+                                 '--black-white', '--black-threshold', '180', '--stroke-radius', radius,
+                                 '--format', 'PNG', '-s', '150', code=code)
+    assert report['status'] == 'success', result.stderr
+    with Image.open(report['files'][0]['output']) as output:
+        assert output.size == (90, 60)
+        assert output.mode == '1'
+        assert set(output.convert('L').tobytes()) == {0, 255}
+        assert output.convert('L').getpixel((38, 30)) == 0
+        assert output.convert('L').getpixel((0, 0)) == 255
+    assert path.read_bytes() == original
