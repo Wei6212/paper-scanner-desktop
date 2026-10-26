@@ -74,6 +74,8 @@ runpy.run_path('main.py', run_name='__main__')
     ['--width', '40', '-s', '50'], ['--rotate', '45'], ['--unknown'],
     ['--black-threshold', '0'], ['--black-threshold', '256'], ['--black-threshold', '125.5'],
     ['--stroke-radius', '-1'], ['--stroke-radius', '4'],
+    ['--watermark-color', 'red'], ['--watermark-size', '7'], ['--watermark-size', '301'],
+    ['--watermark-size', '36.5'], ['--watermark', '字' * 101], ['--watermark', '两行\n文字'],
 ])
 def test_invalid_parameters_fail_before_writing(source, tmp_path, extra):
     output = tmp_path / '结果'
@@ -249,7 +251,8 @@ builtins.__import__ = guarded
 sys.argv[0] = 'main.py'
 runpy.run_path('main.py', run_name='__main__')
 '''
-    _, report = invoke_json('-i', source, '-o', tmp_path / '输出', '--no-crop', '-e', '0', code=code)
+    _, report = invoke_json('-i', source, '-o', tmp_path / '输出', '--no-crop', '-e', '0',
+                            '--watermark', '仅供测试专用', code=code)
     assert report['status'] == 'success'
 
 
@@ -282,4 +285,18 @@ raise SystemExit(main())
         assert set(output.convert('L').tobytes()) == {0, 255}
         assert output.convert('L').getpixel((38, 30)) == 0
         assert output.convert('L').getpixel((0, 0)) == 255
+    assert path.read_bytes() == original
+
+
+def test_watermark_cli_exports_custom_text_color_and_size(tmp_path):
+    path = tmp_path / '水印原图.png'
+    Image.new('RGB', (640, 480), 'white').save(path)
+    original = path.read_bytes()
+    result, report = invoke_json('-i', path, '-o', tmp_path / '输出', '--no-crop', '-e', '0', '--format', 'PNG',
+                                 '--watermark', '仅供测试专用', '--watermark-color', '#ff0000', '--watermark-size', '48')
+    assert report['status'] == 'success', result.stderr
+    with Image.open(report['files'][0]['output']) as output:
+        assert output.size == (640, 480)
+        assert output.getchannel('R').getextrema() == (255, 255)
+        assert 127 <= output.getchannel('G').getextrema()[0] < 200
     assert path.read_bytes() == original

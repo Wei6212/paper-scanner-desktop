@@ -106,6 +106,8 @@ Windows 开发环境将 `.venv/bin/python` 换成 `.venv\Scripts\python.exe`。W
 | `--width` / `--height` | 等比例适配最大宽高，不能与 `-s` 同用 |
 | `-r` / `--recursive` | 包含子目录，默认只处理当前层 |
 | `--max-mb` | 以实际字节数限制单张体积，必要时降低 JPEG 质量并缩图 |
+| `--watermark "仅供测试专用"` | 导出时添加倾斜重复水印，最多 100 字符；默认关闭 |
+| `--watermark-color "#808080"` / `--watermark-size 36` | 水印颜色与字号；固定 50% 透明度，字号为 8～300 像素 |
 | `--dewarp` | 开启曲面展平，默认关闭 |
 | 输出位置 | 不能与输入目录相同；可以放在输入目录下面，扫描时自动排除 |
 
@@ -124,7 +126,8 @@ Windows 运行时缺失等 Python 启动前错误可能仅返回 stderr 和退�
 
 - `Scanner` 记录创建线程，只能在该线程使用。GUI 经 `Worker` 后台处理，CLI 在当前线程顺序处理，不要跨线程共享引擎实例。
 - 处理算法修改放在 `engine.py` / `edges.py`，尺寸、编码、保存修改放在 `exporting.py`；GUI 和 CLI 直接复用，不复制另一套算法。
-- 黑白文字使用 `engine.binarize_text`，输出 Pillow `1` 模式；PNG 缩放后重新二值化，JPEG 不保证纯黑白。加粗半径作用于校正后完整分辨率，不能推断完全缺失的笔画。
+- 黑白文字使用 `engine.binarize_text`，输出 Pillow `1` 模式；未添加水印时 PNG 缩放后重新二值化，JPEG 不保证纯黑白。加粗半径作用于校正后完整分辨率，不能推断完全缺失的笔画。
+- 文字水印由 `exporting.apply_watermark` 在导出尺寸调整后、编码前统一叠加，体积限制缩图时随整图缩小，不能重复叠加。使用本机中文字体，不加载 Qt；水印仅用于导出，GUI 扫描预览不显示。添加水印后保留半透明与颜色，黑白图也转 RGB。
 - CLI 不导入 GUI，不创建 `QApplication`；`--help` 不应加载 Qt、OpenCV 或模型。
 - JSON 模式隔离 Python 及原生依赖的 stdout，包括解释器退出时的缓冲日志；新增日志应写入 stderr。
 - `save_unique` 使用排他创建和临时文件替换。不要改成覆盖写入；异常和 Ctrl+C 时应清理当前未完成的输出。

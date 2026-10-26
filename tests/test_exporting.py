@@ -80,3 +80,61 @@ def test_save_never_overwrites_source_or_prior_result(tmp_path):
 def test_invalid_options_fail_before_encoding(options):
     with pytest.raises(ValueError):
         encode_image(Image.new('RGB', (32, 32)), options)
+
+
+def test_watermark_default_gray_translucent_and_source_unchanged():
+    image = Image.new('RGB', (640, 480), 'white')
+    original = image.tobytes()
+    encoded = encode_image(image, ExportOptions(format='PNG', watermark_text='仅供测试专用'))
+    pixels = np.asarray(Image.open(BytesIO(encoded.data)))
+    assert image.tobytes() == original
+    assert pixels.min() >= 191
+    assert pixels.min() < 230
+    assert np.array_equal(pixels[:, :, 0], pixels[:, :, 1])
+    assert np.array_equal(pixels[:, :, 1], pixels[:, :, 2])
+    assert np.any(pixels[180:300, 200:440] < 230)
+    assert np.any(pixels[:140] < 230) or np.any(pixels[340:] < 230)
+
+
+def test_watermark_custom_color_and_size_on_binary_output():
+    image = Image.new('1', (640, 480), 1)
+    counts = []
+    for size in (20, 60):
+        encoded = encode_image(image, ExportOptions(format='PNG', watermark_text='测试',
+                                                   watermark_color='#ff0000', watermark_size=size))
+        output = Image.open(BytesIO(encoded.data))
+        assert output.mode == 'RGB'
+        pixels = np.asarray(output)
+        assert pixels[:, :, 0].min() == 255
+        assert pixels[:, :, 1].min() >= 127
+        counts.append(np.count_nonzero(pixels[160:320, 240:400, 1] < 230))
+    assert counts[1] > counts[0]
+    assert image.mode == '1' and set(image.convert('L').tobytes()) == {255}
+
+
+@pytest.mark.parametrize('format_name', ['PNG', 'JPEG'])
+def test_watermark_respects_resize_and_hard_file_limit(format_name):
+    encoded = encode_image(noise_image(), ExportOptions(mode='percent', percent=50, format=format_name,
+                                                       max_mb=0.03, watermark_text='仅供测试专用'))
+    assert len(encoded.data) <= 30_000
+    with Image.open(BytesIO(encoded.data)) as output:
+        assert output.size == (encoded.width, encoded.height)
+        assert output.width <= 600 and output.height <= 450
+
+
+@pytest.mark.parametrize('size', [(1, 1), (20, 80), (640, 480)])
+def test_long_watermark_on_small_images(size):
+    encoded = encode_image(Image.new('RGB', size, 'white'),
+                           ExportOptions(format='PNG', watermark_text='测试用途' * 25, watermark_size=300))
+    with Image.open(BytesIO(encoded.data)) as output:
+        assert output.size == size
+
+
+@pytest.mark.parametrize('options', [
+    ExportOptions(watermark_text='字' * 101), ExportOptions(watermark_text='两行\n文字'),
+    ExportOptions(watermark_color='red'), ExportOptions(watermark_color='#12345g'),
+    ExportOptions(watermark_size=7), ExportOptions(watermark_size=301), ExportOptions(watermark_size=36.5),
+])
+def test_invalid_watermark_options(options):
+    with pytest.raises(ValueError):
+        encode_image(Image.new('RGB', (32, 32)), options)

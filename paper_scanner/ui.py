@@ -8,7 +8,7 @@ from PIL import Image
 from PySide6.QtCore import QAbstractAnimation, QDir, QEasingCurve, QEvent, QPoint, QPointF, QRectF, QSettings, QSignalBlocker, Qt, QTimer, QVariantAnimation, Signal, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
+    QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QProgressBar, QPushButton, QScrollArea,
     QSizePolicy, QSlider, QSpinBox, QSplitter, QStyledItemDelegate, QVBoxLayout, QWidget,
@@ -579,6 +579,7 @@ class MainWindow(QMainWindow):
         preview_layout.setContentsMargins(2, 0, 2, 0)
         preview_layout.setSpacing(10)
         bar = QHBoxLayout()
+        bar.setContentsMargins(14, 0, 14, 0)
         bar.addWidget(label('图像工作区', 'section'))
         bar.addStretch()
         self.rotate_button = QPushButton('旋转 90°')
@@ -656,11 +657,14 @@ class MainWindow(QMainWindow):
             comparison.addWidget(panel)
         comparison.setSizes([350, 350])
         preview_layout.addWidget(comparison, 1)
+        preview_footer = QVBoxLayout()
+        preview_footer.setContentsMargins(14, 0, 14, 0)
+        preview_footer.setSpacing(10)
         self.image_info = label('左右均可滚轮缩放、拖动平移，双击适应窗口；拖动原图四角可修正框选。', 'muted', True)
-        preview_layout.addWidget(self.image_info)
+        preview_footer.addWidget(self.image_info)
         self.message = label('', None, True)
         self.message.setMinimumHeight(38)
-        preview_layout.addWidget(self.message)
+        preview_footer.addWidget(self.message)
         actions = QHBoxLayout()
         self.preview_button = QPushButton('更新预览')
         self.preview_button.clicked.connect(self.start_preview)
@@ -669,7 +673,8 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.preview_button)
         actions.addStretch()
         actions.addWidget(self.open_button)
-        preview_layout.addLayout(actions)
+        preview_footer.addLayout(actions)
+        preview_layout.addLayout(preview_footer)
         split.addWidget(center)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -779,6 +784,30 @@ class MainWindow(QMainWindow):
         quality_row.addWidget(self.quality, 1)
         controls.addLayout(quality_row)
         controls.addSpacing(8)
+        controls.addWidget(label('文字水印', 'section'))
+        self.watermark_check = QCheckBox('导出时添加文字水印')
+        self.watermark_check.toggled.connect(self._update_options)
+        controls.addWidget(self.watermark_check)
+        self.watermark_text = QLineEdit()
+        self.watermark_text.setMaxLength(100)
+        self.watermark_text.setPlaceholderText('例如：仅供测试专用')
+        self.watermark_text.setAccessibleName('水印文字')
+        controls.addWidget(self.watermark_text)
+        self.watermark_color = '#808080'
+        self.watermark_color_button = QPushButton('颜色 · #808080')
+        self.watermark_color_button.clicked.connect(self.choose_watermark_color)
+        controls.addWidget(self.watermark_color_button)
+        watermark_row = QHBoxLayout()
+        watermark_row.addWidget(label('字体大小'))
+        self.watermark_size = QSpinBox()
+        self.watermark_size.setRange(8, 300)
+        self.watermark_size.setValue(36)
+        self.watermark_size.setSuffix(' px')
+        self.watermark_size.setToolTip('按导出分辨率设置字号，小图或长文字自动缩小；体积限制缩图时水印同步缩小。')
+        watermark_row.addWidget(self.watermark_size, 1)
+        controls.addLayout(watermark_row)
+        controls.addWidget(label('倾斜重复水印，默认灰色、50% 透明度。\n仅在导出时添加，扫描预览不显示水印。', 'muted', True))
+        controls.addSpacing(8)
         controls.addWidget(label('输出目录', 'section'))
         self.output_path = QLineEdit()
         self.output_path.setPlaceholderText('默认保存到来源目录 / 扫描结果')
@@ -832,6 +861,7 @@ class MainWindow(QMainWindow):
         body.addWidget(self.status_label)
         outer.addLayout(body, 1)
         self.mutating_controls = [self.source_button, self.add_button, self.clear_button, self.file_list, self.recursive, self.auto_crop, self.auto_enhance, self.fill_frame_check, self.curve_check, self.strength, self.black_white, self.black_threshold, self.stroke_radius, self.size_mode, self.percent, self.dimensions, self.limit_check, self.max_mb, self.format, self.quality, self.output_path, self.output_button, self.preview_button, self.rotate_button, self.reset_button, self.export_button]
+        self.mutating_controls.extend([self.watermark_check, self.watermark_text, self.watermark_color_button, self.watermark_size])
         self._update_enabled()
 
     def show_about(self):
@@ -871,11 +901,21 @@ class MainWindow(QMainWindow):
         self.black_white.setChecked(False)
         self.black_threshold.setValue(int(self.settings.value('black_threshold', 180)))
         self.stroke_radius.setValue(int(self.settings.value('stroke_radius', 1)))
+        self.watermark_check.setChecked(False)
+        self.watermark_text.setText(self.settings.value('watermark_text', ''))
+        color = self.settings.value('watermark_color', '#808080')
+        if re.fullmatch(r'#[0-9a-fA-F]{6}', color):
+            self.watermark_color = color
+        self.watermark_color_button.setText(f'颜色 · {self.watermark_color}')
+        self.watermark_size.setValue(int(self.settings.value('watermark_size', 36)))
 
     def _save_settings(self):
         self.settings.setValue('show_thumbnails', self.thumbnail_check.isChecked())
         self.settings.setValue('black_threshold', self.black_threshold.value())
         self.settings.setValue('stroke_radius', self.stroke_radius.value())
+        self.settings.setValue('watermark_text', self.watermark_text.text())
+        self.settings.setValue('watermark_color', self.watermark_color)
+        self.settings.setValue('watermark_size', self.watermark_size.value())
         for key, value in {'size_mode': self.size_mode.currentIndex(), 'percent': self.percent.value(), 'width': self.width_input.value(), 'height': self.height_input.value(), 'max_mb': self.max_mb.value(), 'quality': self.quality.value(), 'format': self.format.currentText(), 'limit': self.limit_check.isChecked()}.items():
             self.settings.setValue(key, value)
 
@@ -890,6 +930,8 @@ class MainWindow(QMainWindow):
         self.black_threshold.setEnabled(self.black_white.isChecked() and self.worker is None)
         self.stroke_radius.setEnabled(self.black_white.isChecked() and self.worker is None)
         self.quality.setEnabled(self.format.currentText() == 'JPEG' and self.worker is None)
+        for widget in (self.watermark_text, self.watermark_color_button, self.watermark_size):
+            widget.setEnabled(self.watermark_check.isChecked() and self.worker is None)
         self.size_help.setText(['保留校正后的完整像素。', '宽、高各为原来的 70%。', '宽、高各为原来的 50%。', '按输入百分比等比例缩放。', '保持长宽比；同时填写时适配最大宽高。'][index])
 
     def _update_enabled(self):
@@ -907,8 +949,12 @@ class MainWindow(QMainWindow):
             self.load_folder(Path(folder))
 
     def choose_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '添加图片', str(self.source_folder or Path.home()), '图片 (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)')
+        folder = Path(self.settings.value('last_input', str(self.source_folder or Path.home())))
+        if not folder.is_dir():
+            folder = Path.home()
+        paths, _ = QFileDialog.getOpenFileNames(self, '添加图片', str(folder), '图片 (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)')
         if paths:
+            self.settings.setValue('last_input', str(Path(paths[0]).parent))
             self.add_files([Path(path) for path in paths])
 
     def load_folder(self, folder):
@@ -1117,11 +1163,21 @@ class MainWindow(QMainWindow):
             return
         self.start_preview()
 
+    def choose_watermark_color(self):
+        color = QColorDialog.getColor(QColor(self.watermark_color), self, '选择水印颜色')
+        if color.isValid():
+            self.watermark_color = color.name()
+            self.watermark_color_button.setText(f'颜色 · {self.watermark_color}')
+
     def export_options(self):
         index = self.size_mode.currentIndex()
         mode = 'original' if index == 0 else 'custom' if index == 4 else 'percent'
         percent = 70 if index == 1 else 50 if index == 2 else self.percent.value()
-        options = ExportOptions(mode, percent, self.width_input.value(), self.height_input.value(), self.format.currentText(), self.quality.value(), self.max_mb.value() if self.limit_check.isChecked() else None)
+        text = self.watermark_text.text().strip() if self.watermark_check.isChecked() else ''
+        if self.watermark_check.isChecked() and not text:
+            raise ValueError('请输入水印文字，或关闭文字水印')
+        options = ExportOptions(mode, percent, self.width_input.value(), self.height_input.value(), self.format.currentText(), self.quality.value(), self.max_mb.value() if self.limit_check.isChecked() else None,
+                                watermark_text=text, watermark_color=self.watermark_color, watermark_size=self.watermark_size.value())
         options.validate()
         return options
 

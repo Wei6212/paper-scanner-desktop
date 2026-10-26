@@ -1,5 +1,6 @@
 """检查控件渲染、点击行为和设置栏布局，覆盖两种 Qt 基础样式。"""
 import os
+from pathlib import Path
 import threading
 import time
 
@@ -32,6 +33,72 @@ def application(qt_application, request):
     configure_application(app)
     app.setStyle(request.param)
     yield app
+
+
+def test_choose_files_remembers_directory(application, monkeypatch, tmp_path):
+    settings_path = str(tmp_path / 'input.ini')
+    monkeypatch.setattr(ui, 'QSettings', lambda *args: QSettings(settings_path, QSettings.Format.IniFormat))
+    monkeypatch.setattr(ui.MainWindow, 'start_preview', lambda *args: None)
+    folder = tmp_path / '手动选图'
+    folder.mkdir()
+    paths = [folder / f'{index}.png' for index in range(3)]
+    for path in paths:
+        Image.new('RGB', (10, 10), 'white').save(path)
+    selections = iter([[str(paths[0])], [str(paths[1])], [], []])
+    opened = []
+
+    def select_files(parent, title, directory, filters):
+        opened.append(Path(directory))
+        return next(selections), ''
+
+    monkeypatch.setattr(ui.QFileDialog, 'getOpenFileNames', select_files)
+    window = ui.MainWindow()
+    try:
+        window.choose_files()
+        window.choose_files()
+        assert opened == [Path.home(), folder]
+        assert [item.path for item in window.items] == paths[:2]
+        # 手动选图不能启用目录扫描，否则可能导入未选中的第三张图。
+        assert window.source_folder is None
+        window.clear_files()
+        window.choose_files()
+        assert opened[-1] == folder
+        assert not window.items
+        assert window.settings.value('last_input') == str(folder)
+    finally:
+        window.close()
+        window.deleteLater()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    restored = ui.MainWindow()
+    try:
+        restored.choose_files()
+        assert opened[-1] == folder
+        assert not restored.items
+    finally:
+        restored.close()
+        restored.deleteLater()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_choose_files_missing_directory_falls_back_to_home(application, monkeypatch, tmp_path):
+    settings = QSettings(str(tmp_path / 'missing_input.ini'), QSettings.Format.IniFormat)
+    settings.setValue('last_input', str(tmp_path / '已删除目录'))
+    monkeypatch.setattr(ui, 'QSettings', lambda *args: settings)
+    opened = []
+
+    def select_files(parent, title, directory, filters):
+        opened.append(Path(directory))
+        return [], ''
+
+    monkeypatch.setattr(ui.QFileDialog, 'getOpenFileNames', select_files)
+    window = ui.MainWindow()
+    try:
+        window.choose_files()
+        assert opened == [Path.home()]
+    finally:
+        window.close()
+        window.deleteLater()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def assert_arrow(widget, rect, disabled=False):
@@ -136,7 +203,8 @@ def test_settings_panel_fits_without_horizontal_scroll(application, monkeypatch,
                 assert scroll.widget().width() == scroll.viewport().width()
                 assert panel.width() >= panel.minimumSizeHint().width()
                 for widget in (window.strength_label, window.strength, window.black_white, window.black_threshold,
-                               window.stroke_radius, window.dimensions, window.format):
+                               window.stroke_radius, window.dimensions, window.format, window.watermark_text,
+                               window.watermark_color_button, window.watermark_size):
                     if widget.isVisible():
                         position = widget.mapTo(scroll.widget(), widget.rect().topRight())
                         assert position.x() < scroll.viewport().width()
@@ -144,6 +212,90 @@ def test_settings_panel_fits_without_horizontal_scroll(application, monkeypatch,
         application.processEvents()
         assert panel.width() >= panel.minimumSizeHint().width() > 0
     finally:
+        window.close()
+        window.deleteLater()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_watermark_controls_settings_and_color_dialog(application, monkeypatch, tmp_path):
+    settings = QSettings(str(tmp_path / 'watermark.ini'), QSettings.Format.IniFormat)
+    monkeypatch.setattr(ui, 'QSettings', lambda *args: settings)
+    window = ui.MainWindow()
+    try:
+        assert window.export_options().watermark_text == ''
+        assert window.watermark_color == '#808080'
+        assert window.watermark_size.value() == 36
+        assert not window.watermark_text.isEnabled()
+        window.watermark_check.setChecked(True)
+        assert window.watermark_text.isEnabled()
+        assert window.watermark_color_button.isEnabled()
+        assert window.watermark_size.isEnabled()
+        with pytest.raises(ValueError, match='水印文字'):
+            window.export_options()
+        window.watermark_text.setText('仅供测试专用')
+        window.watermark_size.setValue(48)
+        monkeypatch.setattr(ui.QColorDialog, 'getColor', lambda *args: QColor('#336699'))
+        window.watermark_color_button.click()
+        options = window.export_options()
+        assert options.watermark_text == '仅供测试专用'
+        assert options.watermark_color == '#336699'
+        assert options.watermark_size == 48
+        monkeypatch.setattr(ui.QColorDialog, 'getColor', lambda *args: QColor())
+        window.watermark_color_button.click()
+        assert window.watermark_color == '#336699'
+        window.watermark_check.setChecked(False)
+        assert window.export_options().watermark_text == ''
+    finally:
+        window.close()
+        window.deleteLater()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    restored = ui.MainWindow()
+    try:
+        assert not restored.watermark_check.isChecked()
+        assert restored.watermark_text.text() == '仅供测试专用'
+        assert restored.watermark_color == '#336699'
+        assert restored.watermark_size.value() == 48
+    finally:
+        restored.close()
+        restored.deleteLater()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_gui_worker_exports_watermark(application, monkeypatch, tmp_path):
+    settings = QSettings(str(tmp_path / 'watermark_export.ini'), QSettings.Format.IniFormat)
+    monkeypatch.setattr(ui, 'QSettings', lambda *args: settings)
+    monkeypatch.setattr(ui.MainWindow, 'start_preview', lambda *args: None)
+    path = tmp_path / '原图.png'
+    Image.new('RGB', (640, 480), 'white').save(path)
+    original = path.read_bytes()
+    window = ui.MainWindow()
+    try:
+        window.auto_crop.setChecked(False)
+        window.auto_enhance.setChecked(False)
+        window.add_files([path])
+        window.output_path.setText(str(tmp_path / '导出'))
+        window.format.setCurrentText('PNG')
+        window.watermark_check.setChecked(True)
+        window.watermark_text.setText('仅供测试专用')
+        window.watermark_color = '#ff0000'
+        window.start_export()
+        assert window.worker is not None
+        assert not window.watermark_check.isEnabled()
+        assert not window.watermark_text.isEnabled()
+        deadline = time.monotonic() + 5
+        while window.worker is not None and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert window.worker is None
+        assert window.batch_ok == 1 and window.batch_failed == 0
+        with Image.open(next((tmp_path / '导出').glob('*.png'))) as output:
+            assert output.getchannel('R').getextrema() == (255, 255)
+            assert 127 <= output.getchannel('G').getextrema()[0] < 200
+        assert path.read_bytes() == original
+    finally:
+        if window.worker is not None:
+            window.worker.cancel()
+            window.worker.wait(5000)
+            application.processEvents()
         window.close()
         window.deleteLater()
         application.sendPostedEvents(None, QEvent.Type.DeferredDelete)

@@ -41,6 +41,9 @@ def create_parser():
     parser.add_argument('--format', type=str.upper, choices=['JPEG', 'JPG', 'PNG'], default='JPEG', help='输出格式，默认 JPEG')
     parser.add_argument('--quality', type=int, default=95, metavar='N', help='JPEG 质量，60～100，默认 95')
     parser.add_argument('--max-mb', type=float, metavar='MB', help='单张文件大小上限，0.01～1000 MB；默认不限制')
+    parser.add_argument('--watermark', default='', metavar='TEXT', help='导出时添加倾斜重复文字水印，最多 100 字符；默认关闭')
+    parser.add_argument('--watermark-color', default='#808080', metavar='#RRGGBB', help='水印颜色，默认 #808080；固定 50%% 透明度')
+    parser.add_argument('--watermark-size', type=int, default=36, metavar='PIXELS', help='水印字号，8～300 像素，默认 36；小图或长文字自动缩小')
     parser.add_argument('--no-crop', action='store_true', help='关闭纸张检测和透视裁剪')
     parser.add_argument('--no-fill-frame', action='store_true', help='关闭纸边精修')
     parser.add_argument('--dewarp', action='store_true', help='启用曲面展平，默认关闭')
@@ -80,6 +83,9 @@ def validate_options(args):
         format='JPEG' if args.format == 'JPG' else args.format,
         quality=args.quality,
         max_mb=args.max_mb,
+        watermark_text=args.watermark,
+        watermark_color=args.watermark_color,
+        watermark_size=args.watermark_size,
     )
     options.validate()
     return options

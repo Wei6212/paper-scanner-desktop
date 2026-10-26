@@ -4,9 +4,10 @@ from io import BytesIO
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,9 @@ class ExportOptions:
     format: str = 'JPEG'
     quality: int = 95
     max_mb: float | None = None
+    watermark_text: str = ''
+    watermark_color: str = '#808080'
+    watermark_size: int = 36
 
     def validate(self):
         if self.mode not in {'original', 'percent', 'custom'}:
@@ -34,6 +38,12 @@ class ExportOptions:
             raise ValueError('JPEG 质量必须在 60 到 100 之间')
         if self.max_mb is not None and (not math.isfinite(self.max_mb) or not 0.01 <= self.max_mb <= 1000):
             raise ValueError('文件上限必须在 0.01 MB 到 1000 MB 之间')
+        if len(self.watermark_text) > 100 or any(ord(char) < 32 or ord(char) == 127 for char in self.watermark_text):
+            raise ValueError('水印文字最多 100 个字符，不能包含换行或控制字符')
+        if re.fullmatch(r'#[0-9a-fA-F]{6}', self.watermark_color) is None:
+            raise ValueError('水印颜色必须为 #RRGGBB，例如 #808080')
+        if type(self.watermark_size) is not int or not 8 <= self.watermark_size <= 300:
+            raise ValueError('水印字号必须为 8 到 300 之间的整数像素')
 
 
 @dataclass
@@ -86,6 +96,51 @@ def _resize(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return image.resize(size, Image.Resampling.LANCZOS)
 
 
+def _watermark_font(size: int) -> ImageFont.FreeTypeFont:
+    """直接使用系统中文字体，命令行不加载 Qt 或依赖界面线程。"""
+    windows_fonts = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts'
+    candidates = [
+        windows_fonts / 'msyh.ttc', windows_fonts / 'simhei.ttf', windows_fonts / 'simsun.ttc',
+        Path('/System/Library/Fonts/PingFang.ttc'),
+        Path('/System/Library/Fonts/STHeiti Medium.ttc'),
+        Path('/System/Library/Fonts/Supplemental/Songti.ttc'),
+        Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
+        Path('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'),
+    ]
+    for path in candidates:
+        if path.is_file():
+            try:
+                return ImageFont.truetype(str(path), size)
+            except OSError:
+                continue
+    raise ValueError('未找到可用的系统中文字体，请安装微软雅黑、黑体或 Noto Sans CJK 后重试')
+
+
+def apply_watermark(image: Image.Image, options: ExportOptions) -> Image.Image:
+    """用倾斜重复文字叠加半透明水印，保留传入图片。"""
+    text = options.watermark_text.strip()
+    if not text:
+        return image
+    font = _watermark_font(options.watermark_size)
+    left, top, right, bottom = font.getbbox(text)
+    # 小图或长文字自动缩小；限制单个印章尺寸，避免创建整图旋转画布。
+    max_width = max(1, min(4096, int(min(image.size) * 1.2)))
+    if right - left > max_width:
+        font = font.font_variant(size=max(1, int(font.size * max_width / (right - left))))
+        left, top, right, bottom = font.getbbox(text)
+    padding = 2
+    mask = Image.new('L', (max(1, right - left) + padding * 2, max(1, bottom - top) + padding * 2))
+    ImageDraw.Draw(mask).text((padding - left, padding - top), text, font=font, fill=128)
+    stamp = mask.rotate(45, resample=Image.Resampling.BICUBIC, expand=True).point(lambda value: min(value, 128))
+    output = image.convert('RGB')
+    step_x, step_y = stamp.width + font.size * 2, stamp.height + font.size * 2
+    center_x, center_y = (image.width - stamp.width) // 2, (image.height - stamp.height) // 2
+    for y in range(center_y % step_y - step_y, image.height, step_y):
+        for x in range(center_x % step_x - step_x, image.width, step_x):
+            output.paste(options.watermark_color, (x, y, x + stamp.width, y + stamp.height), stamp)
+    return output
+
+
 def encode_image(image: Image.Image, options: ExportOptions) -> EncodedImage:
     """优先保持像素，必要时在质量下限后缩图；每次返回前核对字节数。"""
     requested = target_size(image.size, options)
@@ -93,6 +148,7 @@ def encode_image(image: Image.Image, options: ExportOptions) -> EncodedImage:
         image = image.convert('RGB')
     if image.size != requested:
         image = _resize(image, requested)
+    image = apply_watermark(image, options)
     limit = int(options.max_mb * 1_000_000) if options.max_mb is not None else None
     for _ in range(80):
         data = _encode(image, options, options.quality)
